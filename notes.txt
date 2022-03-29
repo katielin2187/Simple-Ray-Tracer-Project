@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>WebGL Example File</title>
+
+
+    <script id="vshader1" type="x-shader/x-vertex">
+       attribute vec3 aPosition;
+       varying   vec3 vPosition;
+       void main() {
+          gl_Position = vec4(aPosition, 1.0);
+          vPosition = aPosition;
+       }
+    </script>
+
+    <script id="fshader1" type="x-shader/x-fragment">
+        precision mediump float;
+        varying vec3 vPosition;
+
+        struct Sphere {
+            vec3 center;
+            float radius;
+            vec3 color;
+            float reflectiveness;   //1 = reflective all light, 0 = absorbing all light
+        };
+
+        struct Plane {      //a plane is a position with a normal
+            vec3 origin;
+            vec3 normal;
+            vec3 color;
+        };
+
+        struct Ray {
+            vec3 origin;
+            vec3 direction;
+        };
+
+        struct Light {
+            vec3 position;
+            float ambience;
+            vec3 specular;
+            vec3 diffuse;
+        };
+
+        struct RayTracerOutput {
+            Ray reflectedRay;
+            vec3 color;
+        };
+
+        Sphere spheres[2];
+        Ray rays[1];
+        Light light[1];
+        Plane planes[1];
+
+        void initialize() {
+            float x = vPosition.x;
+            float y = vPosition.y;
+            float z = vPosition.z;
+            float focalLength = 2.0;
+            vec3 color = vec3(0.0, 0.0, 0.0);
+
+            // Create spheres - red
+            spheres[0].center = vec3(-0.8, 0.3, -0.9);
+            spheres[0].radius = 0.3;
+            spheres[0].color = vec3(1.0, 0.0, 0.0);
+            spheres[0].reflectiveness = 0.8;
+
+            // Create spheres - green
+            spheres[1].center = vec3(-0.25, 0.3, -1.2);
+            spheres[1].radius = 0.3;
+            spheres[1].color = vec3(0.0, 1.0, 0.0);
+            spheres[1].reflectiveness = 0.0;    //absorbing all the light
+
+            //create planes
+            planes[0].origin = vec3(0.0, 0.0, 0.0);
+            planes[0].normal = vec3(0.0, 1.0, 0.0);
+            planes[0].color = vec3(0.0, 0.0, 1.0);
+
+            // Create ray --> camera
+            rays[0].origin = vec3(0.0, 0.7, focalLength);
+            rays[0].direction = normalize(vec3(x, y - 0.3, -focalLength)); //camera looking down
+
+            // Create Light source
+            light[0].position = vec3(-2.0, 2.0, 1.5);
+            light[0].ambience = 0.5;
+        }
+
+        float checkIntersectSphere(Sphere sphere, Ray ray) {
+            vec3 sphereCenter = sphere.center;
+            float radius = sphere.radius;
+            vec3 cameraSource = ray.origin;
+            vec3 cameraDirection = ray.direction;
+
+            vec3 distanceFromCenter = (cameraSource - sphereCenter);
+
+            float B = 2.0 * dot(cameraDirection, distanceFromCenter);
+            float C = dot(distanceFromCenter, distanceFromCenter) - pow(radius, 2.0);
+            float delta = pow(B, 2.0) - 4.0 *C;        //discriminant, h = b^2 -4ac
+            float t = 0.0;      //ray parameter
+
+            if (delta > 0.0) {                  //two solutions, enter and exit
+                float sqRoot = sqrt(delta);
+                float t1 = (-B + sqRoot) / 2.0;
+                float t2 = (-B - sqRoot) / 2.0;
+                t = min(t1, t2);
+            }
+            if (delta == 0.0) {                  //one solution, ray grazes sphere
+                t = -B / 2.0;
+            }
+
+            return t;
+        }
+
+        float checkIntersectPlane(Plane plane, Ray ray) {
+            vec3 planeOrigin = plane.origin;
+            vec3 normal = plane.normal;
+            vec3 cameraSource = ray.origin;
+            vec3 cameraDirection = ray.direction;
+            float t = 0.0;      //ray parameter
+
+            float denominator = dot(normal, cameraDirection);
+
+            if (denominator < 0.0) {         //check again near plane
+                t = dot((planeOrigin - cameraSource), normal) / denominator;
+                return t;
+            }
+
+            return -1.0;    //case we don't hit the plane
+        }
+
+         RayTracerOutput getRay(Ray ray, Light light) {
+
+            RayTracerOutput rayTracer;
+            vec3 color = vec3(0.0, 0.0, 0.0);
+            //float t1 = checkIntersectSphere(spheres[0], ray);
+            //float t2 = checkIntersectSphere(spheres[1], ray);
+
+            float t = 0.0;
+            float minT = 1000000.0;
+            Sphere sphereToShow;
+            for(int i = 0; i < 2; i++) {                    //go through current amount of spheres
+                //form ray through pixel center
+                t = checkIntersectSphere(spheres[i], ray);
+                if(t > 0.0 && t < minT) {
+                    minT = t;
+                    sphereToShow = spheres[i];      //closest object is the object
+                }
+            }
+
+            if(minT > 0.0 && minT < 1000000.0) {
+
+            //drawing sphere
+
+                vec3 sphereCenter = sphereToShow.center;
+                vec3 colorOfSphere = sphereToShow.color;
+                vec3 cameraSource = ray.origin;
+                vec3 cameraDirection = ray.direction;
+                vec3 lightSource = light.position;
+                float ambience = light.ambience;
+
+                vec3 surfacePoint = cameraSource + (minT * cameraDirection);
+                vec3 surfaceNormal = normalize(surfacePoint - sphereCenter);
+
+
+                //L = light - surface
+                float lightDistance = length(lightSource - surfacePoint);
+                vec3 Light = normalize(lightSource - surfacePoint);
+
+                float sphereDistance = lightDistance;        //initial value is distance, max possible distance
+                for(int i = 0; i < 2; i++) {                    //go through current amount of spheres
+                    Ray sphereCheck;
+                    sphereCheck.origin = surfacePoint;
+                    sphereCheck.direction = Light;
+
+                    float t = checkIntersectSphere(spheres[i], sphereCheck);
+                    if(t > 0.0 && t < sphereDistance) {
+                        sphereDistance = t;
+                    }
+                }
+
+                //v --> view vector, camera (rays[0].origin) - reflected
+                vec3 View = normalize(rays[0].origin - surfacePoint);
+
+                //normal direction
+                vec3 Normal = surfaceNormal;
+
+                vec3 Reflection = (2.0 * dot(Light, Normal) * Normal) - Light;
+
+                //specular lighting, reflect L by N (rotating to the other side) & compare how in line it is with view vector
+                vec3 Specular = vec3( pow( max( dot( View * 1.0, Reflection) , 0.0), 24.0 ));  //max --> give value biggest to 0, clamp the lighting
+
+                //if negative values
+                if(dot(Light, Normal) <= 0.0){
+                    Specular = vec3(0.0, 0.0, 0.0);
+                }
+
+
+                float lightBrightness = 2.0;
+                float attenuation = 1.0 / ((lightDistance/lightBrightness)  * (lightDistance/lightBrightness) );    //how dull light goes with distance, inverse square law
+               //color = colorOfSphere * attenuation * (ambience + ((1.0 - ambience) * max(0.0, dot(surfaceNormal, lightSource)))) + Specular;
+                color = colorOfSphere * attenuation * (ambience + ((1.0 - ambience) * max(0.0, dot(surfaceNormal, lightSource))));
+
+
+                if(sphereToShow.color == vec3(1.0, 0.0, 0.0)){  //if the sphere is red, show specular highlight
+                     color = colorOfSphere * attenuation * (ambience + ((1.0 - ambience) * max(0.0, dot(surfaceNormal, lightSource)))) + Specular;
+                }
+
+
+
+                //distance check in the sphere code to see if pixel in sphere should receive lighting
+
+                if(sphereDistance < lightDistance ){
+
+                    vec3 shadowColor  = colorOfSphere * 0.2; //making the color darker, closer to black
+
+                    if( (length(color)/3.0) < (length(shadowColor)/3.0)) {      //average all the values, check to see which is darker
+                        color = color;
+
+                    } else {
+                        color = shadowColor;
+                    }
+                }
+
+
+                rayTracer.color = color;
+
+                 if(sphereToShow.color == vec3(1.0, 0.0, 0.0)){  //if the sphere is red, show specular highlight
+                    Ray reflectionRay;
+                    vec3 reflection = reflect(ray.direction, surfaceNormal);
+                    reflectionRay.origin = surfacePoint - 0.0001 * surfaceNormal;
+                    reflectionRay.direction = reflection;
+                    rayTracer.reflectedRay = reflectionRay;
+                }
+
+
+
+             }
+             else {
+
+             //drawing background
+
+                //drawing planes
+                float closestPlane = checkIntersectPlane(planes[0], ray);
+
+                if(closestPlane >= 0.0){
+                    vec3 cameraSource = ray.origin;
+                    vec3 cameraDirection = ray.direction;
+                    vec3 surfaceNormal = planes[0].normal;
+                    rayTracer.color = planes[0].color;
+
+                    vec3 surfacePoint = cameraSource + (closestPlane * cameraDirection);
+
+                    //check distance between surface point and light sources
+                    float xDistance = (light.position.x - surfacePoint.x);
+                    float yDistance = (light.position.y - surfacePoint.y);
+                    float zDistance = (light.position.z - surfacePoint.z);
+                    float distToLight = sqrt( pow(xDistance, 2.0) + pow(yDistance, 2.0) + pow(zDistance, 2.0));
+
+                    //drawing sphere reflection on planes
+                    float closestSphere = 1000000.0;
+
+                    for(int i = 0; i < 2; i++) {                    //go through current amount of spheres
+
+                        Ray shadowCheck;
+                        shadowCheck.origin = surfacePoint;
+                        shadowCheck.direction = normalize(light.position - surfacePoint); //vec3(0.0, 1.0, 0.0);
+
+                        float distanceToSphere = checkIntersectSphere(spheres[i], shadowCheck);
+                        if(distanceToSphere > 0.0 && distanceToSphere < closestSphere) {    //hit a sphere, and found closer sphere
+                            closestSphere = distanceToSphere;
+                        }
+                    }
+
+                    //is our light closer to a sphere --> not in shadow
+                    if(closestSphere < distToLight){    //currently in shadow, check to see if smaller ray has found a hit
+                        rayTracer.color = rayTracer.color * 0.3;        //drawing the shadow color
+                    }
+
+                    Ray reflectionRay;
+                    vec3 reflection = reflect(ray.direction, surfaceNormal);
+                    reflectionRay.origin = surfacePoint - 0.0001 * surfaceNormal;
+                    reflectionRay.direction = reflection;
+                    rayTracer.reflectedRay = reflectionRay;
+
+                } else {
+                     rayTracer.color = color;    //returning background color if you don't return sphere
+                }
+
+                //rayTracer.color = vec3(closestPlane / 32.0);
+                //rayTracer.color = color;    //returning background color if you don't return sphere
+             }
+
+            return rayTracer;
+         }
+
+        void main() {
+            initialize();
+            RayTracerOutput mainRay = getRay(rays[0], light[0]);
+            RayTracerOutput reflectionRay = getRay(mainRay.reflectedRay, light[0]);         //original reflection
+
+
+            gl_FragColor = vec4(mainRay.color + mix(reflectionRay.color, mainRay.color, 0.3) , 1.0);
+
+
+
+       }
+    </script>
+
+    <script id="vshader2" type="x-shader/x-vertex">
+       attribute vec3 aPosition;
+       varying   vec3 vPosition;
+       void main() {
+          gl_Position = vec4(aPosition, 1.0);
+          vPosition = aPosition;
+       }
+    </script>
+
+    <script id="fshader2" type="x-shader/x-fragment">
+        precision mediump float;
+        varying vec3 vPosition;
+
+        struct Sphere {
+            vec3 center;
+            float radius;
+            vec3 color;
+        };
+
+        struct Ray {
+            vec3 origin;
+            vec3 direction;
+        };
+
+        struct Light {
+            vec3 position;
+            float ambience;
+            vec3 specular;
+            vec3 diffuse;
+        };
+
+        struct RayTracerOutput {
+            Ray reflectedRay;
+            vec3 color;
+        };
+
+        Sphere spheres[4];
+        Ray rays[1];
+        Light light[1];
+
+        void initialize() {
+            float x = vPosition.x;
+            float y = vPosition.y;
+            float z = vPosition.z;
+            float focalLength = 2.0;
+            vec3 color = vec3(0.0, 0.0, 0.0);
+
+            // Create spheres - red
+            spheres[0].center = vec3(-0.4, -0.4, 0.0);
+            spheres[0].radius = 0.3;
+            spheres[0].color = vec3(1.0, 0.0, 0.0);
+
+            // Create spheres - blue
+            spheres[1].center = vec3(0.4, -0.4, 0.0);
+            spheres[1].radius = 0.3;
+            spheres[1].color = vec3(0.0, 0.0, 1.0);
+
+            // Create spheres - yellow
+            spheres[2].center = vec3(-0.4, 0.4, 0.0);
+            spheres[2].radius = 0.3;
+            spheres[2].color = vec3(1.0, 1.0, 0.0);
+
+            // Create spheres - green
+            spheres[3].center = vec3(0.4, 0.4, 0.0);
+            spheres[3].radius = 0.3;
+            spheres[3].color = vec3(0.0, 1.0, 0.0);
+
+
+            // Create ray
+            rays[0].origin = vec3(0.0, 0.0, focalLength);               //camera, starting point
+            rays[0].direction = normalize(vec3(x, y, -focalLength));    //inverse
+
+            // Create Light source
+            light[0].position = vec3(0.0, 0.0, 1.0);    //lit from top
+            light[0].ambience = 0.1;
+            //light[0].specular = 0.1;
+            //light[0].diffuse = 0.1;
+        }
+
+        float checkIntersectSphere(Sphere sphere, Ray ray) {
+            vec3 sphereCenter = sphere.center;
+            float radius = sphere.radius;
+            vec3 cameraSource = ray.origin;
+            vec3 cameraDirection = ray.direction;
+
+            vec3 distanceFromCenter = (cameraSource - sphereCenter);
+            float B = 2.0 * dot(cameraDirection, distanceFromCenter);
+            float C = dot(distanceFromCenter, distanceFromCenter) - pow(radius, 2.0);
+            float delta = pow(B, 2.0) - 4.0 * C;
+            float t = 0.0;
+            if (delta > 0.0) {
+                float sqRoot = sqrt(delta);
+                float t1 = (-B + sqRoot) / 2.0;
+                float t2 = (-B - sqRoot) / 2.0;
+                t = min(t1, t2);
+            }
+            if (delta == 0.0) {
+                t = -B / 2.0;
+            }
+
+            return t;
+        }
+
+         RayTracerOutput getRay(Ray ray, Light light) {
+
+            RayTracerOutput rayTracer;
+            vec3 color = vec3(0.0, 0.0, 0.0);
+            //float t1 = checkIntersectSphere(spheres[0], ray);
+            //float t2 = checkIntersectSphere(spheres[1], ray);
+
+            float t = 0.0;
+            float minT = 1000000.0;
+            Sphere sphereToShow;
+            for(int i = 0; i < 4; i++) {                    //go through current amount of spheres
+                t = checkIntersectSphere(spheres[i], ray);
+                if(t > 0.0 && t < minT) {                   //if the ray hit a sphere
+                    minT = t;
+                    sphereToShow = spheres[i];
+                }
+            }
+
+            if(minT > 0.0 && minT < 1000000.0) {
+
+                vec3 sphereCenter = sphereToShow.center;
+                vec3 colorOfSphere = sphereToShow.color;
+                vec3 cameraSource = ray.origin;
+                vec3 cameraDirection = ray.direction;
+                vec3 lightSource = light.position;
+                float ambience = light.ambience;
+
+                vec3 surfacePoint = cameraSource + (minT * cameraDirection);
+                vec3 surfaceNormal = normalize(surfacePoint - sphereCenter);
+                color = colorOfSphere * (ambience + ((1.0 - ambience) * max(0.0, dot(surfaceNormal, lightSource))));
+
+                rayTracer.color = color;
+
+
+                Ray reflectionRay;
+                vec3 reflection = reflect(ray.direction, surfaceNormal);
+                reflectionRay.origin = surfacePoint - 0.0001 * surfaceNormal;
+                reflectionRay.direction = reflection;
+                rayTracer.reflectedRay = reflectionRay;
+             }
+             else {
+                rayTracer.color = color;
+             }
+
+            return rayTracer;
+         }
+
+        void main() {
+            initialize();
+            RayTracerOutput mainRay = getRay(rays[0], light[0]);
+            RayTracerOutput reflectionRay = getRay(mainRay.reflectedRay, light[0]);            //original reflection
+            RayTracerOutput reflectionOfReflectionRay = getRay(reflectionRay.reflectedRay, light[0]);   //reflection of reflections
+
+
+            //L = light - surface
+            vec3 Light = normalize(light[0].position - mainRay.reflectedRay.origin);     //light position pointing towards light, -> normalize( lightPos - objectPosiiton)
+
+            //v --> view vector, camera (rays[0].origin) - reflected
+            vec3 View = normalize(rays[0].origin - mainRay.reflectedRay.origin);
+
+            //normal direction
+            vec3 Normal = normalize(mainRay.reflectedRay.direction);    //can approximate diffuse
+
+            vec3 Reflection = (2.0 * dot(Light, Normal) * Normal) - Light;
+
+            //specular lighting, reflect L by N (rotating to the other side) , and compare how in line it is with the view vector
+            //specular --> accounts for position of camera
+
+            vec3 Specular = vec3( pow( max( dot( View * 1.0, Reflection) , 0.0), 4.0 ));  //max --> give value biggest to 0, clamp the lighting
+
+            //if negative values
+            if(dot(Light, Normal) <= 0.0){
+                Specular = vec3(0.0, 0.0, 0.0);
+            }
+
+
+            //gl_FragColor = vec4(normalize(mainRay.reflectedRay.direction), 1.0);    //render direction, z = up, blue, y = green, x = red
+            gl_FragColor = vec4((mainRay.color + reflectionOfReflectionRay.color + reflectionRay.color) + Specular, 1.0);
+            //gl_FragColor = vec4(Normal, 1.0);   //normal
+            //gl_FragColor = vec4(Specular, 1.0);   //specular
+
+
+            //output dot prod, L & N --> look like diffuse lighting, the more in line with L, the brighter
+            //vec3(dot(Light, Normal));
+
+       }
+    </script>
+
+    <script id="vshader3" type="x-shader/x-vertex">
+       attribute vec3 aPosition;
+       varying   vec3 vPosition;
+       void main() {
+          gl_Position = vec4(aPosition, 1.0);
+          vPosition = aPosition;
+       }
+    </script>
+
+
+    <script id="fshader3" type="x-shader/x-fragment">
+        precision mediump float;
+        varying vec3 vPosition;
+
+        struct Sphere {
+            vec3 center;
+            float radius;
+            vec3 color;
+        };
+
+        struct Plane {      //a plane is a position with a normal
+            vec3 origin;
+            vec3 normal;
+            vec3 color;
+        };
+
+        struct Ray {
+            vec3 origin;
+            vec3 direction;
+        };
+
+        struct Light {
+            vec3 position;
+            float ambience;
+            vec3 specular;
+            vec3 diffuse;
+        };
+
+        struct RayTracerOutput {
+            Ray reflectedRay;
+            vec3 color;
+        };
+
+        Sphere spheres[2];
+        Ray rays[1];
+        Light light[1];
+        Plane planes[5];
+
+        void initialize() {
+            float x = vPosition.x;
+            float y = vPosition.y;
+            float z = vPosition.z;
+            float focalLength = 2.0;
+            vec3 color = vec3(0.0, 0.0, 0.0);
+
+            // Create spheres - red
+            spheres[0].center = vec3(-1.0, 0.1, -0.8);
+            spheres[0].radius = 0.4;
+            spheres[0].color = vec3(1.0, 0.0, 0.0);
+
+            // Create spheres - green
+            spheres[1].center = vec3(0.75, 0.1, -0.25);
+            spheres[1].radius = 0.4;
+            spheres[1].color = vec3(0.0, 1.0, 0.0);
+
+            /////////////////////////////////////////////////////////////
+
+            //create planes - blue, floor
+            planes[0].origin = vec3(0.0, 0.1, 0.0);
+            planes[0].normal = vec3(0.0, 1.0, 0.0);
+            planes[0].color = vec3(0.0, 0.0, 1.0);
+
+            //create planes - yellow, back
+            planes[1].origin = vec3(0.0, 0.0, -1.0);
+            planes[1].normal = vec3(0.0, 0.0, 1.0);
+            planes[1].color = vec3(1.0, 1.0, 0.0);
+
+            //create planes - teal, left side
+            planes[2].origin = vec3(-1.0, 0.0, 0.0);
+            planes[2].normal = vec3(1.0, 0.0, 0.0);
+            planes[2].color = vec3(0.0, 1.0, 1.0);
+
+            //create planes - green, right side
+            planes[3].origin = vec3(1.0, 0.0, 0.0);
+            planes[3].normal = vec3(-1.0, 0.0, 0.0);
+            planes[3].color = vec3(0.0, 1.0, 0.0);
+
+            //create planes - magenta, top
+            planes[4].origin = vec3(0.0, 2.1, 0.0);
+            planes[4].normal = vec3(0.0, -1.0, 0.0);
+            planes[4].color = vec3(1.0, 0.0, 1.0);
+
+            // Create ray --> camera
+            rays[0].origin = vec3(0.0, 1.0, focalLength + 1.0);
+            rays[0].direction = normalize(vec3(x, y + 0.1, -focalLength)); //camera looking down
+
+            // Create Light source
+            light[0].position = vec3(0.0, 6.0, 2.0);
+            light[0].ambience = 0.4;
+        }
+
+        float checkIntersectSphere(Sphere sphere, Ray ray) {
+            vec3 sphereCenter = sphere.center;
+            float radius = sphere.radius;
+            vec3 cameraSource = ray.origin;
+            vec3 cameraDirection = ray.direction;
+
+            vec3 distanceFromCenter = (cameraSource - sphereCenter);
+            float B = 2.0 * dot(cameraDirection, distanceFromCenter);
+            float C = dot(distanceFromCenter, distanceFromCenter) - pow(radius, 2.0);
+            float delta = pow(B, 2.0) - 4.0 * C;
+            float t = 0.0;
+            if (delta > 0.0) {
+                float sqRoot = sqrt(delta);
+                float t1 = (-B + sqRoot) / 2.0;
+                float t2 = (-B - sqRoot) / 2.0;
+                t = min(t1, t2);
+            }
+            if (delta == 0.0) {
+                t = -B / 2.0;
+            }
+
+            return t;
+        }
+
+        float checkIntersectPlane(Plane plane, Ray ray) {
+            vec3 planeOrigin = plane.origin;
+            vec3 normal = plane.normal;
+            vec3 cameraSource = ray.origin;
+            vec3 cameraDirection = ray.direction;
+            float t = 0.0;
+
+            float denominator = dot(normal, cameraDirection);
+
+            if (denominator < 0.0) {         //check again near plane
+                t = dot((planeOrigin - cameraSource), normal) / denominator;
+                return t;
+            }
+
+            return -1.0;    //case we don't hit the plane
+        }
+
+         RayTracerOutput getRay(Ray ray, Light light) {
+
+            RayTracerOutput rayTracer;
+            vec3 color = vec3(0.0, 0.0, 0.0);
+            //float t1 = checkIntersectSphere(spheres[0], ray);
+            //float t2 = checkIntersectSphere(spheres[1], ray);
+
+            float t = 0.0;
+            float minT = 1000000.0;
+            Sphere sphereToShow;
+            for(int i = 0; i < 2; i++) {                    //go through current amount of spheres
+                t = checkIntersectSphere(spheres[i], ray);
+                if(t > 0.0 && t < minT) {
+                    minT = t;
+                    sphereToShow = spheres[i];
+                }
+            }
+
+            if(minT > 0.0 && minT < 1000000.0) {
+
+                vec3 sphereCenter = sphereToShow.center;
+                vec3 colorOfSphere = sphereToShow.color;
+                vec3 cameraSource = ray.origin;
+                vec3 cameraDirection = ray.direction;
+                vec3 lightSource = light.position;
+                float ambience = light.ambience;
+
+                vec3 surfacePoint = cameraSource + (minT * cameraDirection);
+                vec3 surfaceNormal = normalize(surfacePoint - sphereCenter);
+                color = colorOfSphere * (ambience + ((1.0 - ambience) * max(0.0, dot(surfaceNormal, lightSource))));
+
+                 //L = light - surface
+                float lightDistance = length(lightSource - surfacePoint);
+                vec3 Light = normalize(lightSource - surfacePoint);
+
+                float sphereDistance = lightDistance;        //initial value is distance, max possible distance
+                for(int i = 0; i < 2; i++) {                    //go through current amount of spheres
+                    Ray sphereCheck;
+                    sphereCheck.origin = surfacePoint;
+                    sphereCheck.direction = Light;
+
+                    float t = checkIntersectSphere(spheres[i], sphereCheck);
+                    if(t > 0.0 && t < sphereDistance) {
+                        sphereDistance = t;
+                    }
+                }
+
+                //v --> view vector, camera (rays[0].origin) - reflected
+                vec3 View = normalize(rays[0].origin - surfacePoint);
+
+                //normal direction
+                vec3 Normal = surfaceNormal;
+
+                vec3 Reflection = (2.0 * dot(Light, Normal) * Normal) - Light;
+
+                //specular lighting, reflect L by N (rotating to the other side) & compare how in line it is with view vector
+                vec3 Specular = vec3( pow( max( dot( View * 1.0, Reflection) , 0.0), 24.0 ));  //max --> give value biggest to 0, clamp the lighting
+
+                //if negative values
+                if(dot(Light, Normal) <= 0.0){
+                    Specular = vec3(0.0, 0.0, 0.0);
+                }
+
+
+                float lightBrightness = 4.0;
+                float attenuation = 1.0 / ((lightDistance/lightBrightness)  * (lightDistance/lightBrightness) );    //how dull light goes with distance, inverse square law
+
+                color = colorOfSphere * attenuation * (ambience + ((1.0 - ambience) * max(0.0, dot(surfaceNormal, lightSource))));
+
+
+                if(sphereToShow.color == vec3(1.0, 0.0, 0.0)){  //if the sphere is red, show specular highlight
+                    //specular
+                    color = colorOfSphere * attenuation * (ambience + ((1.0 - ambience) * max(0.0, dot(surfaceNormal, lightSource)))) + Specular;
+
+
+                    float closestPlaneDistance =  1000000.0;
+                    Plane closestPlane;
+
+                    for(int i = 0; i < 5; i++) {
+                        float evaluation = checkIntersectPlane(planes[i], ray);     //how far are each of my planes away from this array, care about plane closest to
+
+                        if ((evaluation >= 0.0) && (evaluation < closestPlaneDistance)){      //found a plane closer than the current max distance
+                            closestPlane = planes[i];
+                            closestPlaneDistance = evaluation;
+                        }
+
+                       if(closestPlaneDistance >= 0.0){
+                            vec3 cameraSource = ray.origin;
+                            vec3 cameraDirection = ray.direction;
+                            vec3 surfaceNormal = planes[i].normal;
+                            rayTracer.color = planes[i].color;
+
+                            vec3 surfacePoint = cameraSource + (closestPlaneDistance * cameraDirection);
+
+                            //check distance between surface point and light sources
+                            float xDistance = (light.position.x - surfacePoint.x);
+                            float yDistance = (light.position.y - surfacePoint.y);
+                            float zDistance = (light.position.z - surfacePoint.z);
+                            float distToLight = sqrt( pow(xDistance, 2.0) + pow(yDistance, 2.0) + pow(zDistance, 2.0));
+
+                            //drawing sphere reflection on planes
+                            float closestSphere = 1000000.0;
+
+                            for(int i = 0; i < 2; i++) {                    //go through current amount of spheres
+
+                                Ray shadowCheck;
+                                shadowCheck.origin = surfacePoint;
+                                shadowCheck.direction = normalize(light.position - surfacePoint); //vec3(0.0, 1.0, 0.0);
+
+                                float distanceToSphere = checkIntersectSphere(spheres[i], shadowCheck);
+                                if(distanceToSphere > 0.0 && distanceToSphere < closestSphere) {    //hit a sphere, and found closer sphere
+                                    closestSphere = distanceToSphere;
+                                }
+                            }
+
+                            //is our light closer to a sphere --> not in shadow
+                            if(closestSphere < distToLight){    //currently in shadow, check to see if smaller ray has found a hit
+                                rayTracer.color = rayTracer.color * 0.3;        //drawing the shadow color
+                            }
+
+                            /*
+                            //if i comment out these lines below --> return to orig
+                            Ray reflectionRay;
+                            vec3 reflection = reflect(ray.direction, surfaceNormal);
+                            reflectionRay.origin = surfacePoint - 0.0001 * surfaceNormal;
+                            reflectionRay.direction = reflection;
+                            rayTracer.reflectedRay = reflectionRay;
+                            */
+
+
+                        } else {
+                             rayTracer.color = closestPlane.color;    //returning background color if you don't return sphere
+                        }
+
+                    }
+
+                    //looks like gimbal lock if uncommented
+                    //reflection, refraction??
+                    Ray reflectionRay;
+                    vec3 reflection = reflect(ray.direction, surfaceNormal);
+                    reflectionRay.origin = surfacePoint - 0.0001 * surfaceNormal;
+                    reflectionRay.direction = reflection;
+                    rayTracer.reflectedRay = reflectionRay;
+
+                }
+
+                /*
+                //distance check in the sphere code to see if pixel in sphere should receive lighting
+                if(sphereDistance < lightDistance ){
+
+                    vec3 shadowColor  = colorOfSphere * 0.1; //making the color darker, closer to black
+
+                    if( (length(color)/3.0) < (length(shadowColor)/3.0)) {      //average all the values, check to see which is darker
+                        color = color;
+
+                    } else {
+                        color = shadowColor;
+                    }
+                }
+                */
+
+
+                rayTracer.color = color;
+
+
+             }
+             else {
+
+                float closestPlaneDistance =  1000000.0;
+                Plane closestPlane;
+
+                for(int i = 0; i < 5; i++) {                    //go through current amount of planes
+
+                    float evaluation = checkIntersectPlane(planes[i], ray);     //how far are each of my planes away from this array, care about plane closest to
+
+                    if ((evaluation >= 0.0) && (evaluation < closestPlaneDistance)){      //found a plane closer than the current max distance
+                        closestPlane = planes[i];
+                        closestPlaneDistance = evaluation;
+                    }
+
+
+                    for(int i = 0; i < 5; i++) {
+
+                    }
+
+
+                    if(closestPlaneDistance >= 0.0){
+                        vec3 cameraSource = ray.origin;
+                        vec3 cameraDirection = ray.direction;
+                        vec3 surfaceNormal = planes[i].normal;
+                        rayTracer.color = planes[i].color;
+
+                        vec3 surfacePoint = cameraSource + (closestPlaneDistance * cameraDirection);
+
+                        //check distance between surface point and light sources
+                        float xDistance = (light.position.x - surfacePoint.x);
+                        float yDistance = (light.position.y - surfacePoint.y);
+                        float zDistance = (light.position.z - surfacePoint.z);
+                        float distToLight = sqrt( pow(xDistance, 2.0) + pow(yDistance, 2.0) + pow(zDistance, 2.0));
+
+                        //drawing sphere reflection on planes
+                        float closestSphere = 1000000.0;
+
+                        for(int i = 0; i < 2; i++) {                    //go through current amount of spheres
+
+                            Ray shadowCheck;
+                            shadowCheck.origin = surfacePoint;
+                            shadowCheck.direction = normalize(light.position - surfacePoint); //vec3(0.0, 1.0, 0.0);
+
+                            float distanceToSphere = checkIntersectSphere(spheres[i], shadowCheck);
+                            if(distanceToSphere > 0.0 && distanceToSphere < closestSphere) {    //hit a sphere, and found closer sphere
+                                closestSphere = distanceToSphere;
+                            }
+                        }
+
+                        //is our light closer to a sphere --> not in shadow
+                        if(closestSphere < distToLight){    //currently in shadow, check to see if smaller ray has found a hit
+                            rayTracer.color = rayTracer.color * 0.3;        //drawing the shadow color
+                        }
+
+                        /*
+                        //if i comment out these lines below --> return to orig
+                        Ray reflectionRay;
+                        vec3 reflection = reflect(ray.direction, surfaceNormal);
+                        reflectionRay.origin = surfacePoint - 0.0001 * surfaceNormal;
+                        reflectionRay.direction = reflection;
+                        rayTracer.reflectedRay = reflectionRay;
+                        */
+
+                    } else {
+                         rayTracer.color = closestPlane.color;    //returning background color if you don't return sphere
+                    }
+
+
+                }
+
+
+
+
+                //at this point, closest plane is equal to plane closest to the ray,
+                //ray tracer.color
+
+                rayTracer.color = closestPlane.color;
+
+
+             }
+
+            return rayTracer;
+         }
+
+        void main() {
+            initialize();
+            RayTracerOutput mainRay = getRay(rays[0], light[0]);
+            RayTracerOutput reflectionRay = getRay(mainRay.reflectedRay , light[0]);         //original reflection
+
+            /////////////////////////////
+
+            gl_FragColor = vec4((mainRay.color) + reflectionRay.color, 1.0);
+
+       }
+    </script>
+
+    <script src="lib/webgl-utils.js"></script>
+    <script src="lib/initShaders.js"></script>
+    <script src="lib/MV.js"></script>
+
+    <script src="example.js"></script>
+
+</head>
+
+<body onload="main()">
+
+<canvas id="webgl" width="400" height="400">
+    Please use a browser that supports the "canvas" tag.
+</canvas><br>
+
+<button id= "image1">Image 1
+</button>
+
+<button id= "image2">Image 2
+</button>
+
+<button id= "image3">Image 3
+</button>
+
+</body>
+</html>
